@@ -1,82 +1,74 @@
 from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.responses import JSONResponse
-from typing import List, Optional, Iterable
-from models import Cart, CartItem, Item, ItemPost
+from typing import Optional, Dict
+from .models import Cart, CartItem, Item, ItemPost, UpdateItem
 
 
 app = FastAPI(title="Shop API")
 
 
 # Хранилища данных
-_items = dict[int, Item]()
-_carts = dict[int, Cart]()
-
-
-def id_generator() -> Iterable[int]:
-    id = 0
-    while True:
-        yield id
-        id += 1
-
-
-_items_id_generator = id_generator()
-_carts_id_generator = id_generator()
+_items: Dict[int, Item] = {}
+_carts: Dict[int, Cart] = {}
+_item_id = 0
+_cart_id = 0
 
 
 # --- Ресурсы для Item ---
 
 @app.post("/item", status_code=status.HTTP_201_CREATED)
 def create_item(item: ItemPost):
-    item_id = next(_items_id_generator)
-    new_item = Item(id=item_id, name=item.name, price=item.price)
-    _items[item_id] = new_item
+    global _item_id
+    _item_id += 1
+    new_item = Item(id=_item_id, name=item.name, price=item.price)
+    _items[_item_id] = new_item
     return JSONResponse(
-        content={"id": item_id, "name": new_item.name, "price": new_item.price},
+        content={"id": _item_id, "name": new_item.name, "price": new_item.price},
         status_code=status.HTTP_201_CREATED,
-        headers={"Location": f"/item/{item_id}"},
+        headers={"Location": f"/item/{_item_id}"},
     )
 
 
 @app.get("/item/{id}", status_code=status.HTTP_200_OK)
 def get_item(id: int):
-    if id not in _items or _items[id]["deleted"]:
+    if id not in _items.keys() or _items[id].deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    return _items[id]
+    item = _items[id]
+    return {"id": item.id, "name": item.name, "price": item.price}
 
 
 @app.put("/item/{id}")
 def update_item(id: int, item: ItemPost):
-    if id not in _items or _items[id]["deleted"]:
+    if id not in _items.keys() or _items[id].deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
 
-    _items[id]["name"] = item.name
-    _items[id]["price"] = item.price
-    return _items[id]
+    _items[id].name = item.name
+    _items[id].price = item.price
+    return {"id": _items[id].id, "name": _items[id].name, "price": _items[id].price}
 
 
 @app.patch("/item/{id}")
-def patch_item(id: int, item: dict):
-    if id not in _items:
+def patch_item(id: int, new_item: UpdateItem):
+    if id not in _items.keys():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
-    if _items[id]["deleted"]:
+    item = _items[id]
+    if item.deleted:
         raise HTTPException(status_code=status.HTTP_304_NOT_MODIFIED, detail="Item is deleted")
 
-    allowed_fields = {"name", "price"}
-    for key, value in item.items():
-        if key in allowed_fields:
-            _items[id][key] = value
-        else:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=f"Field {key} is not allowed")
+    if new_item.name is not None:
+        item.name = new_item.name
+    if new_item.price is not None:
+        item.price = new_item.price
 
-    return _items[id]
+    return {"id": item.id, "name": item.name, "price": item.price}
 
 
 @app.delete("/item/{id}")
 def delete_item(id: int):
-    if id not in _items:
+    if id not in _items.keys():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found")
 
-    _items[id]["deleted"] = True
+    _items[id].deleted= True
     return {"message": "Item deleted"}
 
 
@@ -88,13 +80,12 @@ def get_items(
     max_price: Optional[float] = Query(None, ge=0.0),
     show_deleted: bool = Query(False)
 ):
-    filtered_items = [item for item in _items if not item["deleted"] or show_deleted]
-
-    # Фильтрация по цене
-    if min_price is not None:
-        filtered_items = [item for item in filtered_items if item["price"] >= min_price]
-    if max_price is not None:
-        filtered_items = [item for item in filtered_items if item["price"] <= max_price]
+    filtered_items = [
+        item for item in _items.values()
+        if (min_price is None or item.price >= min_price) and
+           (max_price is None or item.price <= max_price) and
+           (show_deleted or not item.deleted)
+    ]
 
     # Применение offset и limit для пагинации
     start = offset
@@ -106,19 +97,20 @@ def get_items(
 
 @app.post("/cart", status_code=status.HTTP_201_CREATED)
 def create_cart():
-    cart_id = next(_carts_id_generator)
-    _carts[cart_id] = Cart(id=cart_id)
+    global _cart_id
+    _cart_id += 1
+    _carts[_cart_id] = Cart(id=_cart_id)
 
     return JSONResponse(
-        content={"id": cart_id},
+        content={"id": _cart_id},
         status_code=status.HTTP_201_CREATED,
-        headers={"Location": f"/cart/{cart_id}"},
+        headers={"Location": f"/cart/{_cart_id}"},
     )
 
 
 @app.get("/cart/{id}")
 def get_cart(id: int):
-    if id not in _carts:
+    if id not in _carts.keys():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cart not found")
     return _carts[id]
 
@@ -128,7 +120,7 @@ def add_item_to_cart(cart_id: int, item_id: int):
     if cart_id not in _carts:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cart not found")
 
-    if item_id not in _items or _items[item_id]["deleted"]:
+    if item_id not in _items.keys() or _items[item_id].deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Item not found or deleted")
 
     item = _items[item_id]
@@ -153,21 +145,13 @@ def get_carts(
         min_quantity: Optional[int] = Query(None, ge=0),
         max_quantity: Optional[int] = Query(None, ge=0)
 ):
-    filtered_carts = list(_carts.values())
-
-    # Фильтрация по цене
-    if min_price is not None:
-        filtered_carts = [cart for cart in filtered_carts if cart["price"] >= min_price]
-    if max_price is not None:
-        filtered_carts = [cart for cart in filtered_carts if cart["price"] <= max_price]
-
-    # Фильтрация по количеству товаров в корзине
-    if min_quantity is not None:
-        filtered_carts = [cart for cart in filtered_carts if
-                          sum(item["quantity"] for item in cart["items"]) >= min_quantity]
-    if max_quantity is not None:
-        filtered_carts = [cart for cart in filtered_carts if
-                          sum(item["quantity"] for item in cart["items"]) <= max_quantity]
+    filtered_carts = [
+        cart for cart in _carts.values()
+        if (min_price is None or cart.price >= min_price) and
+           (max_price is None or cart.price <= max_price) and
+           (min_quantity is None or sum(item.quantity for item in cart.items) >= min_quantity) and
+           (max_quantity is None or sum(item.quantity for item in cart.items) <= max_quantity)
+    ]
 
     # Применение offset и limit для пагинации
     start = offset
