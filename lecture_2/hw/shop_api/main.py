@@ -2,9 +2,13 @@ from fastapi import FastAPI, HTTPException, Query, status
 from fastapi.responses import JSONResponse
 from typing import Optional, Dict
 from .models import Cart, CartItem, Item, ItemPost, UpdateItem
+from prometheus_fastapi_instrumentator import Instrumentator
 
 
 app = FastAPI(title="Shop API")
+
+# Установка метрик Prometheus
+Instrumentator().instrument(app).expose(app)
 
 
 # Хранилища данных
