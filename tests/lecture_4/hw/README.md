@@ -7,10 +7,7 @@
 Команда, для запуска тестов:
 
 ```sh
-poetry run pytest \
-    -vv \
-    --cov=lecture_4/demo_service \
-    ./tests/lecture_4/hw
+poetry run pytest -vv --cov=lecture_4/demo_service ./tests/lecture_4/hw
 ```
 
 Для получения 3-х баллов, помимо 100% покрытия нужно так же реализовать скрипт
